@@ -1,6 +1,6 @@
 # UKB RAP GCTA GREML Pipeline (Blood Traits)
 
-This repository prepares and runs SNP-based heritability (GREML) analyses with GCTA for the following UK Biobank blood phenotype codes:
+This repository prepares and runs SNP-based heritability (GREML) analyses with GCTA for UK Biobank blood traits:
 
 - `30000`
 - `30010`
@@ -13,82 +13,113 @@ This repository prepares and runs SNP-based heritability (GREML) analyses with G
 - `30130`
 - `30140`
 
-It is designed for **UKB RAP / DNANexus** workflows, including running GCTA via the Docker image:
+It is designed for **UKB RAP / DNANexus** and supports running GCTA via:
 
 - `quay.io/biocontainers/gcta:1.94.1--h9ee0642_0`
 
 ## What this repository does
 
-1. Takes UKB genotype sample IDs from a `.fam` file.
-2. Takes a phenotype CSV (your blood traits file).
-3. Takes a covariate CSV.
-4. Creates trait-specific GCTA inputs (`.phen`, `.covar`, `.qcovar`, `.keep`) for each trait.
-5. Builds a GRM once.
-6. Runs GREML per trait one-by-one.
-7. Summarizes `.hsq` outputs into one table.
+1. Reads sample IDs from PLINK `.fam`.
+2. Reads phenotype table (CSV/TSV supported).
+3. Reads covariate table (CSV/TSV supported).
+4. Builds trait-specific GCTA files (`.phen`, `.covar`, `.qcovar`, `.keep`).
+5. Builds GRM once.
+6. Runs GREML one trait at a time.
+7. Summarizes `.hsq` results.
 
 ## Repository structure
 
-- `scripts/prepare_gcta_inputs.py`: creates per-trait GCTA input files.
-- `scripts/run_gcta_make_grm.sh`: wrapper for GRM generation.
-- `scripts/run_gcta_greml_one_trait.sh`: runs one GREML trait.
-- `scripts/run_gcta_greml_all_traits.sh`: loops over all prepared traits.
-- `scripts/summarize_hsq.py`: aggregates all `.hsq` outputs.
-- `scripts/gcta_docker.sh`: runs `gcta64` inside Docker (RAP-friendly).
-- `traits/blood_trait_codes.txt`: trait list.
-- `dnanexus/runbook_swiss_army_knife.md`: RAP runbook and `dx run` examples.
-- `examples/genotype_prefixes.mbfile`: template for chromosome-split genotype prefixes.
+- `scripts/prepare_gcta_inputs.py`: prepares per-trait input files.
+- `scripts/run_gcta_make_grm.sh`: GRM wrapper.
+- `scripts/run_gcta_greml_one_trait.sh`: one-trait GREML wrapper.
+- `scripts/run_gcta_greml_all_traits.sh`: loop over traits.
+- `scripts/summarize_hsq.py`: parse/summarize `.hsq`.
+- `scripts/gcta_docker.sh`: run `gcta64` inside Docker.
+- `dnanexus/runbook_swiss_army_knife.md`: RAP execution runbook.
+- `traits/blood_trait_codes.txt`: default blood trait list.
 
-## Inputs you need
+## UKB RAP golden rule
 
-1. Genotype PLINK files (`.bed`, `.bim`, `.fam`) either:
-- Single merged prefix (`--bfile`), or
-- One prefix per chromosome using `--mbfile`.
+- Use **Jupyter/terminal** for lightweight prep, QC, and launching jobs.
+- Use **`dx run` jobs** (Swiss Army Knife/workflows) for heavy GRM/GREML compute.
+- Keep all data and outputs inside RAP project storage; do not egress protected data.
+- Run one trait per job where possible for fault tolerance and easy reruns.
 
-2. Phenotype CSV containing:
-- `participant.eid`
-- trait columns (default expected format: `participant.p<code>_i0`)
+## Find your project ID (`project-...`)
 
-3. Covariate CSV containing at least participant ID plus covariates.
+In RAP terminal:
 
-## Step-by-step (one-by-one)
+```bash
+dx pwd
+```
+
+This prints something like `project-ABCDEF1234567890:/your/folder`.
+Your project ID is the part before `:`.
+
+Convenience command:
+
+```bash
+PROJECT_ID=$(dx pwd | sed 's/:.*//')
+echo "$PROJECT_ID"
+```
+
+Also useful:
+
+```bash
+dx env
+dx ls
+dx find data --name "ukb22418_c1_b0_v2.fam" --path /
+```
+
+## Inputs needed
+
+1. Genotype PLINK files (`.bed/.bim/.fam`) as either:
+- one merged prefix (`--bfile`), or
+- chromosome-split prefixes (`--mbfile`).
+
+2. Phenotype file with participant ID and the target traits.
+
+3. Covariate file with participant ID and covariates.
+
+## Step-by-step
+
+### Step 0: Work in your existing RAP project folder
+
+No download is required if files are already in your project folder.
+
+```bash
+dx pwd
+ls -lh
+```
 
 ### Step 1: Prepare trait-specific files
+
+Recommended for your colleague-style covariate file (`FID/IID`, age/sex/interactions, PCs, batch, center):
 
 ```bash
 python3 scripts/prepare_gcta_inputs.py \
   --fam ukb22418_c1_b0_v2.fam \
   --pheno-csv raw_blood_phenotypes.csv \
-  --covar-csv covariates.csv \
+  --covar-csv covariates.tsv \
+  --covar-id-column IID \
+  --covar-preset ukb_blood_lab_shared \
   --trait-codes 30000 30010 30020 30040 30050 30060 30080 30120 30130 30140 \
-  --id-column participant.eid \
-  --add-age-squared \
+  --num-pcs 20 \
   --outdir gcta_inputs
 ```
 
-Outputs are written to:
+Outputs:
 - `gcta_inputs/traits/<trait>/<trait>.phen`
 - `gcta_inputs/traits/<trait>/<trait>.covar`
 - `gcta_inputs/traits/<trait>/<trait>.qcovar`
 - `gcta_inputs/traits/<trait>/<trait>.keep`
 - `gcta_inputs/trait_manifest.tsv`
 - `gcta_inputs/traits_to_run.txt`
+- `gcta_inputs/covariate_selection.txt`
 
-If your covariate column names differ, pass them explicitly, for example:
+### Step 2: Build `mbfile` list (if chromosome split)
 
-```bash
-python3 scripts/prepare_gcta_inputs.py \
-  --fam ukb22418_c1_b0_v2.fam \
-  --pheno-csv raw_blood_phenotypes.csv \
-  --covar-csv covariates.csv \
-  --covar-cols participant.p31 participant.p22000 participant.p54_i0 \
-  --qcovar-cols participant.p21022 participant.p22009_a1 participant.p22009_a2 \
-  --outdir gcta_inputs
-```
-
-### Step 2: Build genotype prefix list for GRM (`--mbfile`)
-
-Create `genotype_prefixes.mbfile` with one PLINK prefix per line (no suffix):
+Create `genotype_prefixes.mbfile` with one prefix per line (no suffix):
 
 ```text
 ukb22418_c1_b0_v2
@@ -97,9 +128,13 @@ ukb22418_c2_b0_v2
 ukb22418_c22_b0_v2
 ```
 
-### Step 3: Build GRM once
+### Step 3: Pull GCTA Docker image once
 
-Option A: through Docker wrapper:
+```bash
+docker pull quay.io/biocontainers/gcta:1.94.1--h9ee0642_0
+```
+
+### Step 4: Build GRM
 
 ```bash
 mkdir -p grm
@@ -110,21 +145,15 @@ scripts/gcta_docker.sh \
   --out grm/blood_grm
 ```
 
-Option B: native `gcta64` on PATH:
+If you have an unrelated sample list, add:
 
 ```bash
-bash scripts/run_gcta_make_grm.sh \
-  --gcta gcta64 \
-  --mbfile genotype_prefixes.mbfile \
-  --threads 16 \
-  --out grm/blood_grm
+--keep unrelated_samples.keep
 ```
 
-If you have an unrelated-sample keep list, add `--keep unrelated_samples.keep` in GRM creation.
+### Step 5: Run GREML one trait at a time
 
-### Step 4: Run GREML one trait at a time
-
-Example for trait `30000`:
+Example `30000`:
 
 ```bash
 bash scripts/run_gcta_greml_one_trait.sh \
@@ -136,24 +165,9 @@ bash scripts/run_gcta_greml_one_trait.sh \
   --out-dir results
 ```
 
-`run_gcta_greml_one_trait.sh` automatically skips `--covar` or `--qcovar` if the prepared file only has `FID IID` columns.
+Repeat for the remaining traits.
 
-Then repeat for each trait:
-- `30010`, `30020`, `30040`, `30050`, `30060`, `30080`, `30120`, `30130`, `30140`
-
-### Step 5: Optional batch run (still one-trait-per-job inside loop)
-
-```bash
-bash scripts/run_gcta_greml_all_traits.sh \
-  --gcta "scripts/gcta_docker.sh" \
-  --grm grm/blood_grm \
-  --traits-file gcta_inputs/traits_to_run.txt \
-  --input-dir gcta_inputs/traits \
-  --threads 16 \
-  --out-dir results
-```
-
-### Step 6: Summarize output
+### Step 6: Summarize heritability
 
 ```bash
 python3 scripts/summarize_hsq.py \
@@ -161,24 +175,24 @@ python3 scripts/summarize_hsq.py \
   --out results/hsq_summary.tsv
 ```
 
-## DNANexus / RAP-specific notes
+## Covariate presets in `prepare_gcta_inputs.py`
 
-- Your Swiss Army Knife log confirms Docker pull/run works for this GCTA image.
-- For managed jobs, use `dx run app-swiss-army-knife` and pass script/data files with `-iin` and commands with `-icmd`.
-- A complete RAP runbook with examples is in:
-  - `dnanexus/runbook_swiss_army_knife.md`
+- `--covar-preset auto` (default): simple auto-detect.
+- `--covar-preset ukb_greml_common`: age, sex, array/batch, center, genetic PCs.
+- `--covar-preset ukb_blood_lab_shared`: tuned for your lab shared file; includes age, sex, age terms/interactions, genetic PCs, rare PCs, array/batch/center, WES/WGS batch when present.
 
-## Common pitfalls
+You can always override with explicit `--covar-cols` and `--qcovar-cols`.
 
-- ID mismatch between `participant.eid` and `.fam` IID/FID -> results in empty trait files.
-- Missing covariates -> large sample drop after filtering.
-- GREML memory pressure on very large `N` -> use stricter sample filtering (`--keep`) before GRM.
-- Wrong phenotype column names -> pass explicit trait or covariate columns.
+## Why these covariates
 
-## Reproducibility
+Common UKB heritability analyses report adjustment for age, sex, array/batch, assessment center, and ancestry PCs, with some models also using age-polynomial and age-by-sex interaction terms.
 
-Keep these with each run:
-- exact command lines used
-- GCTA version/image digest
-- `gcta_inputs/trait_manifest.tsv`
-- all `.log` and `.hsq` files
+- Ge et al. (UKB heritability framework): age, sex, array, assessment center, top PCs.
+- UKB anthropometric GREML analysis: age, age2, sex, age*sex, age2*sex, center, batch, PCs.
+- UKB blood-trait variability analyses: sex, age, technical factors, and genetic PCs are commonly adjusted.
+
+## Notes
+
+- `prepare_gcta_inputs.py` auto-detects delimiter (CSV/TSV).
+- `run_gcta_greml_one_trait.sh` skips `--covar` or `--qcovar` if a file has only `FID IID`.
+- GREML on large `N` can be memory-heavy; use unrelated subsets and appropriate instance size.

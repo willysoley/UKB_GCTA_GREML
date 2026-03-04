@@ -10,8 +10,18 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
-docker run --rm \
-  -u "$(id -u):$(id -g)" \
-  -w "$PWD" \
-  -v "$PWD":"$PWD" \
-  "$IMAGE" gcta64 "$@"
+docker_args=(
+  --rm
+  -u "$(id -u):$(id -g)"
+  -w "$PWD"
+  -v "$PWD":"$PWD"
+)
+
+if [[ -d /mnt/project ]]; then
+  docker_args+=(-v /mnt/project:/mnt/project)
+fi
+if [[ -d /home/dnanexus ]]; then
+  docker_args+=(-v /home/dnanexus:/home/dnanexus)
+fi
+
+docker run "${docker_args[@]}" "$IMAGE" gcta64 "$@"
