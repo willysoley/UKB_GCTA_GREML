@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.pycache_local/
+
+# Analysis outputs
+gcta_inputs/
+grm/
+results/
+*.log
+*.hsq
+*.grm.bin
+*.grm.N.bin
+*.grm.id

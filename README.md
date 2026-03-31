@@ -29,7 +29,7 @@ It is designed for **UKB RAP / DNANexus** and supports running GCTA via:
 
 ## Repository structure
 
-- `scripts/prepare_gcta_inputs.py`: prepares per-trait input files.
+- `scripts/prepare_gcta_inputs.R`: prepares per-trait input files.
 - `scripts/run_gcta_make_grm.sh`: GRM wrapper.
 - `scripts/run_gcta_greml_one_trait.sh`: one-trait GREML wrapper.
 - `scripts/run_gcta_greml_all_traits.sh`: loop over traits.
@@ -55,6 +55,7 @@ dx pwd
 
 This prints something like `project-ABCDEF1234567890:/your/folder`.
 Your project ID is the part before `:`.
+When you use `"$PROJECT_ID:/some/path"` with `dx run`, the path is relative to the project root, so you do not include the project name (`disease_proteome`) in the path string.
 
 Convenience command:
 
@@ -89,6 +90,9 @@ No download is required if files are already in your project folder.
 
 ```bash
 dx pwd
+ANALYSIS_DIR=/Sool/GCTA_Heritability
+REPO_DIR=$ANALYSIS_DIR/UKB_GCTA_Heritability
+cd /mnt/project$REPO_DIR
 ls -lh
 ```
 
@@ -97,16 +101,18 @@ ls -lh
 Recommended for your colleague-style covariate file (`FID/IID`, age/sex/interactions, PCs, batch, center):
 
 ```bash
-python3 scripts/prepare_gcta_inputs.py \
-  --fam ukb22418_c1_b0_v2.fam \
-  --pheno-csv raw_blood_phenotypes.csv \
-  --covar-csv covariates.tsv \
+Rscript scripts/prepare_gcta_inputs.R \
+  --fam "/mnt/project/Bulk/Genotype Results/Genotype calls/ukb22418_c1_b0_v2.fam" \
+  --pheno-csv "/mnt/project/Sool/GCTA_Heritability/data/phenotype/raw_blood_phenotypes.csv" \
+  --covar-csv "/mnt/project/Sool/covariates_processed_all.tsv" \
   --covar-id-column IID \
   --covar-preset ukb_blood_lab_shared \
   --trait-codes 30000 30010 30020 30040 30050 30060 30080 30120 30130 30140 \
   --num-pcs 20 \
   --outdir gcta_inputs
 ```
+
+If the genotype/phenotype/covariate files are protected RAP objects that are only available online, do this step through `dx run app-swiss-army-knife` with project paths and `-imount_inputs=true` instead of assuming direct local filesystem access.
 
 Outputs:
 - `gcta_inputs/traits/<trait>/<trait>.phen`
@@ -175,7 +181,7 @@ python3 scripts/summarize_hsq.py \
   --out results/hsq_summary.tsv
 ```
 
-## Covariate presets in `prepare_gcta_inputs.py`
+## Covariate presets in `prepare_gcta_inputs.R`
 
 - `--covar-preset auto` (default): simple auto-detect.
 - `--covar-preset ukb_greml_common`: age, sex, array/batch, center, genetic PCs.
@@ -193,6 +199,7 @@ Common UKB heritability analyses report adjustment for age, sex, array/batch, as
 
 ## Notes
 
-- `prepare_gcta_inputs.py` auto-detects delimiter (CSV/TSV).
+- `prepare_gcta_inputs.R` auto-detects delimiter (CSV/TSV).
 - `run_gcta_greml_one_trait.sh` skips `--covar` or `--qcovar` if a file has only `FID IID`.
 - GREML on large `N` can be memory-heavy; use unrelated subsets and appropriate instance size.
+- Using `ukb22418_c1_b0_v2.fam` is just a convenience. For the standard chromosome-split UKB PLINK release, the `.fam` file is effectively the same sample list across chromosomes, so any matching chromosome `.fam` from the same release works.

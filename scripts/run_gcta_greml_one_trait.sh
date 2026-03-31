@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Run GREML for one trait prepared by prepare_gcta_inputs.py.
+Run GREML for one trait prepared by prepare_gcta_inputs.R.
 
 Usage:
   run_gcta_greml_one_trait.sh \
