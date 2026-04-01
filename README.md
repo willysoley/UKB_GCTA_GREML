@@ -30,7 +30,6 @@ It is designed for **UKB RAP / DNANexus** and supports running GCTA via:
 ## Repository structure
 
 - `scripts/prepare_gcta_inputs.R`: prepares per-trait input files.
-- `scripts/submit_step1_prepare_dx.R`: RStudio-friendly Step 1 job launcher for RAP.
 - `scripts/run_gcta_make_grm.sh`: GRM wrapper.
 - `scripts/run_gcta_greml_one_trait.sh`: one-trait GREML wrapper.
 - `scripts/run_gcta_greml_all_traits.sh`: loop over traits.
@@ -85,39 +84,32 @@ dx find data --name "ukb22418_c1_b0_v2.fam" --path /
 
 ## Step-by-step
 
-### Step 0: Work in your existing RAP project folder
+### Step 0: Keep data in RAP project storage, but run code from a writable folder
 
-No download is required if files are already in your project folder.
+In RAP, `/mnt/project` is usually read-only inside Jupyter/RStudio. The practical pattern is:
+
+- keep protected genotype/phenotype/covariate files in `/mnt/project`
+- clone this repo into your home directory
+- run local scripts from `~/UKB_GCTA_GREML`
+- submit heavy compute with `dx run`
+
+Example:
 
 ```bash
 dx pwd
-ANALYSIS_DIR=/Sool/GCTA_Heritability
-REPO_DIR=$ANALYSIS_DIR/UKB_GCTA_Heritability
-cd /mnt/project$REPO_DIR
-ls -lh
+cd ~
+git clone git@github.com:willysoley/UKB_GCTA_GREML.git
+cd ~/UKB_GCTA_GREML
 ```
 
 ### Step 1: Prepare trait-specific files
 
 Recommended for your colleague-style covariate file (`FID/IID`, age/sex/interactions, PCs, batch, center):
 
-From RStudio on RAP, the simplest first command is:
+This is the exact direct command to run from the RAP terminal or RStudio terminal:
 
 ```bash
-Rscript scripts/submit_step1_prepare_dx.R --yes
-```
-
-Or from the RStudio console:
-
-```r
-system("Rscript scripts/submit_step1_prepare_dx.R --yes")
-```
-
-That submits the protected-input Step 1 job using your RAP project paths by default.
-
-If you want to run the preparation directly on already-mounted files instead of submitting a job:
-
-```bash
+cd ~/UKB_GCTA_GREML
 Rscript scripts/prepare_gcta_inputs.R \
   --fam "/mnt/project/Bulk/Genotype Results/Genotype calls/ukb22418_c1_b0_v2.fam" \
   --pheno-csv "/mnt/project/Sool/GCTA_Heritability/data/phenotype/raw_blood_phenotypes.csv" \
@@ -129,7 +121,24 @@ Rscript scripts/prepare_gcta_inputs.R \
   --outdir gcta_inputs
 ```
 
-If the genotype/phenotype/covariate files are protected RAP objects that are only available online, do this step through `dx run app-swiss-army-knife` with project paths and `-imount_inputs=true` instead of assuming direct local filesystem access.
+If you want to run the same Step 1 from the RStudio console instead of the terminal:
+
+```r
+system(paste(
+  "cd ~/UKB_GCTA_GREML &&",
+  "Rscript scripts/prepare_gcta_inputs.R",
+  "--fam '/mnt/project/Bulk/Genotype Results/Genotype calls/ukb22418_c1_b0_v2.fam'",
+  "--pheno-csv '/mnt/project/Sool/GCTA_Heritability/data/phenotype/raw_blood_phenotypes.csv'",
+  "--covar-csv '/mnt/project/Sool/covariates_processed_all.tsv'",
+  "--covar-id-column IID",
+  "--covar-preset ukb_blood_lab_shared",
+  "--trait-codes 30000 30010 30020 30040 30050 30060 30080 30120 30130 30140",
+  "--num-pcs 20",
+  "--outdir gcta_inputs"
+))
+```
+
+This is the Step 1 command we used in practice. It keeps the protected inputs in RAP and writes the prepared outputs under your home directory in `~/UKB_GCTA_GREML/gcta_inputs`.
 
 Outputs:
 - `gcta_inputs/traits/<trait>/<trait>.phen`
@@ -140,41 +149,71 @@ Outputs:
 - `gcta_inputs/traits_to_run.txt`
 - `gcta_inputs/covariate_selection.txt`
 
-### Step 2: Build `mbfile` list (if chromosome split)
-
-Create `genotype_prefixes.mbfile` with one prefix per line (no suffix):
-
-```text
-ukb22418_c1_b0_v2
-ukb22418_c2_b0_v2
-...
-ukb22418_c22_b0_v2
-```
-
-### Step 3: Pull GCTA Docker image once
+### Step 2: Check the prepared files
 
 ```bash
-docker pull quay.io/biocontainers/gcta:1.94.1--h9ee0642_0
+cd ~/UKB_GCTA_GREML
+head gcta_inputs/trait_manifest.tsv
+head gcta_inputs/covariate_selection.txt
+head gcta_inputs/traits/30000/30000.phen
+head gcta_inputs/traits/30000/30000.covar
+head gcta_inputs/traits/30000/30000.qcovar
+head gcta_inputs/traits/30000/30000.keep
 ```
 
-### Step 4: Build GRM
+### Step 3: Submit the GRM as a separate Swiss Army Knife job
+
+This is the exact terminal block to copy and paste. It uses all 22 chromosome prefixes and submits a standalone GRM job inside RAP.
 
 ```bash
+PROJECT_ID=$(dx pwd | sed 's/:.*//')
+GENO_DIR="/Bulk/Genotype Results/Genotype calls"
+DEST="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm"
+
+DX_INPUTS=()
+for chr in $(seq 1 22); do
+  prefix="$GENO_DIR/ukb22418_c${chr}_b0_v2"
+  DX_INPUTS+=("-iin=${PROJECT_ID}:${prefix}.bed")
+  DX_INPUTS+=("-iin=${PROJECT_ID}:${prefix}.bim")
+  DX_INPUTS+=("-iin=${PROJECT_ID}:${prefix}.fam")
+done
+
+GCTA_CMD=$(cat <<'EOF'
+set -euo pipefail
 mkdir -p grm
-scripts/gcta_docker.sh \
-  --mbfile genotype_prefixes.mbfile \
-  --make-grm \
-  --thread-num 16 \
-  --out grm/blood_grm
+for chr in $(seq 1 22); do
+  echo "ukb22418_c${chr}_b0_v2"
+done > genotype_prefixes.mbfile
+
+docker run --rm \
+  -u "$(id -u):$(id -g)" \
+  -w "$PWD" \
+  -v "$PWD":"$PWD" \
+  quay.io/biocontainers/gcta:1.94.1--h9ee0642_0 \
+  gcta64 \
+    --mbfile genotype_prefixes.mbfile \
+    --make-grm \
+    --thread-num 16 \
+    --out grm/blood_grm
+EOF
+)
+
+dx run app-swiss-army-knife \
+  "${DX_INPUTS[@]}" \
+  -icmd="$GCTA_CMD" \
+  --instance-type mem2_ssd1_v2_x32 \
+  --destination "${PROJECT_ID}:${DEST}" \
+  --yes
 ```
 
-If you have an unrelated sample list, add:
+Expected outputs:
+- `blood_grm.grm.bin`
+- `blood_grm.grm.N.bin`
+- `blood_grm.grm.id`
 
-```bash
---keep unrelated_samples.keep
-```
+If you already have a project-level keep file for unrelated or QC-passed samples, add it both as another `-iin=...` input and in the GCTA command as `--keep your_keep_file.keep`.
 
-### Step 5: Run GREML one trait at a time
+### Step 4: Run GREML one trait at a time
 
 Example `30000`:
 
@@ -190,7 +229,7 @@ bash scripts/run_gcta_greml_one_trait.sh \
 
 Repeat for the remaining traits.
 
-### Step 6: Summarize heritability
+### Step 5: Summarize heritability
 
 ```bash
 python3 scripts/summarize_hsq.py \
