@@ -30,6 +30,7 @@ It is designed for **UKB RAP / DNANexus** and supports running GCTA via:
 ## Repository structure
 
 - `scripts/prepare_gcta_inputs.R`: prepares per-trait input files.
+- `scripts/submit_step1_prepare_dx.R`: RStudio-friendly Step 1 job launcher for RAP.
 - `scripts/run_gcta_make_grm.sh`: GRM wrapper.
 - `scripts/run_gcta_greml_one_trait.sh`: one-trait GREML wrapper.
 - `scripts/run_gcta_greml_all_traits.sh`: loop over traits.
@@ -40,7 +41,7 @@ It is designed for **UKB RAP / DNANexus** and supports running GCTA via:
 
 ## UKB RAP golden rule
 
-- Use **Jupyter/terminal** for lightweight prep, QC, and launching jobs.
+- Use **RStudio, Jupyter, or a RAP terminal** for lightweight prep, QC, and launching jobs.
 - Use **`dx run` jobs** (Swiss Army Knife/workflows) for heavy GRM/GREML compute.
 - Keep all data and outputs inside RAP project storage; do not egress protected data.
 - Run one trait per job where possible for fault tolerance and easy reruns.
@@ -99,6 +100,22 @@ ls -lh
 ### Step 1: Prepare trait-specific files
 
 Recommended for your colleague-style covariate file (`FID/IID`, age/sex/interactions, PCs, batch, center):
+
+From RStudio on RAP, the simplest first command is:
+
+```bash
+Rscript scripts/submit_step1_prepare_dx.R --yes
+```
+
+Or from the RStudio console:
+
+```r
+system("Rscript scripts/submit_step1_prepare_dx.R --yes")
+```
+
+That submits the protected-input Step 1 job using your RAP project paths by default.
+
+If you want to run the preparation directly on already-mounted files instead of submitting a job:
 
 ```bash
 Rscript scripts/prepare_gcta_inputs.R \

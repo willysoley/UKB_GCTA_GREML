@@ -1,7 +1,7 @@
 # UKB RAP Runbook (Swiss Army Knife + GCTA Docker)
 
 This runbook assumes:
-- You are on UKB RAP (JupyterLab terminal or SSH app session).
+- You are on UKB RAP (RStudio, JupyterLab terminal, or SSH app session).
 - `dx` CLI is configured.
 - Data files already live inside your RAP project folder.
 - Analysis stays inside RAP project storage (no egress).
@@ -60,6 +60,20 @@ ukb22418_c22_b0_v2
 ```
 
 ## Step 2: Prepare per-trait phenotype/covariate files
+
+From RStudio on RAP, the easiest way to launch Step 1 is:
+
+```bash
+Rscript scripts/submit_step1_prepare_dx.R --yes
+```
+
+Or from the RStudio console:
+
+```r
+system("Rscript scripts/submit_step1_prepare_dx.R --yes")
+```
+
+That launcher infers the repo location from your current working directory and submits the Swiss Army Knife job with your protected RAP file paths by default.
 
 If the files are available on the worker filesystem already, you can run this interactively from the repo in your current analysis folder:
 
