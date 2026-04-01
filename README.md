@@ -213,6 +213,11 @@ Expected outputs:
 
 If you already have a project-level keep file for unrelated or QC-passed samples, add it both as another `-iin=...` input and in the GCTA command as `--keep your_keep_file.keep`.
 
+Important:
+- A full dense GRM on all ~488k UKB samples is usually not practical in a standard RAP job. GCTA may report memory requirements on the order of terabytes.
+- For GREML, the usual practical approach is to build the GRM on an unrelated/QC-passed subset using `--keep`.
+- If you need the full GRM itself for another purpose, GCTA supports `--make-grm-part` to split GRM construction across many jobs, but GREML on the full dense UKB-scale GRM is still generally impractical.
+
 ### Step 4: Run GREML one trait at a time
 
 Example `30000`:
