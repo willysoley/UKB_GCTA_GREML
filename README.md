@@ -218,6 +218,108 @@ Important:
 - For GREML, the usual practical approach is to build the GRM on an unrelated/QC-passed subset using `--keep`.
 - If you need the full GRM itself for another purpose, GCTA supports `--make-grm-part` to split GRM construction across many jobs, but GREML on the full dense UKB-scale GRM is still generally impractical.
 
+### Step 3b: Submit a partitioned GRM across many jobs
+
+If you want to build the full dense GRM itself, use GCTA's `--make-grm-part`.
+
+This is the exact terminal block to submit 250 part-jobs, following the pattern described in the GCTA documentation for UKB-scale data:
+
+```bash
+PROJECT_ID=$(dx pwd | sed 's/:.*//')
+GENO_DIR="/Bulk/Genotype Results/Genotype calls"
+DEST="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned"
+PARTS=250
+THREADS=4
+INSTANCE="mem2_ssd1_v2_x16"
+
+DX_INPUTS=()
+for chr in $(seq 1 22); do
+  prefix="$GENO_DIR/ukb22418_c${chr}_b0_v2"
+  DX_INPUTS+=("-iin=${PROJECT_ID}:${prefix}.bed")
+  DX_INPUTS+=("-iin=${PROJECT_ID}:${prefix}.bim")
+  DX_INPUTS+=("-iin=${PROJECT_ID}:${prefix}.fam")
+done
+
+for i in $(seq 1 ${PARTS}); do
+  GCTA_CMD=$(cat <<EOF
+set -euo pipefail
+for chr in \$(seq 1 22); do
+  echo "ukb22418_c\${chr}_b0_v2"
+done > genotype_prefixes.mbfile
+
+docker run --rm \
+  -u "\$(id -u):\$(id -g)" \
+  -w "\$PWD" \
+  -v "\$PWD":"\$PWD" \
+  quay.io/biocontainers/gcta:1.94.1--h9ee0642_0 \
+  gcta64 \
+    --mbfile genotype_prefixes.mbfile \
+    --make-grm-part ${PARTS} ${i} \
+    --thread-num ${THREADS} \
+    --out blood_grm
+EOF
+)
+
+  dx run app-swiss-army-knife \
+    "${DX_INPUTS[@]}" \
+    -icmd="$GCTA_CMD" \
+    --instance-type "${INSTANCE}" \
+    --destination "${PROJECT_ID}:${DEST}/parts" \
+    --name "gcta-grm-part-${i}-of-${PARTS}" \
+    --brief \
+    --yes
+done
+```
+
+After all part-jobs finish successfully, merge the parts in a second Swiss Army Knife job:
+
+```bash
+PROJECT_ID=$(dx pwd | sed 's/:.*//')
+PART_DIR="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/parts"
+MERGE_DEST="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/merged"
+PARTS=250
+
+DX_INPUTS=()
+for i in $(seq 1 ${PARTS}); do
+  for suffix in grm.id grm.bin grm.N.bin; do
+    file_id=$(dx find data \
+      --path "${PART_DIR}" \
+      --name "blood_grm.part_${PARTS}_${i}.${suffix}" \
+      --brief)
+    DX_INPUTS+=("-iin=${file_id}")
+  done
+done
+
+MERGE_CMD=$(cat <<EOF
+set -euo pipefail
+: > blood_grm.grm.id
+: > blood_grm.grm.bin
+: > blood_grm.grm.N.bin
+for i in \$(seq 1 ${PARTS}); do
+  cat "blood_grm.part_${PARTS}_\${i}.grm.id" >> blood_grm.grm.id
+  cat "blood_grm.part_${PARTS}_\${i}.grm.bin" >> blood_grm.grm.bin
+  cat "blood_grm.part_${PARTS}_\${i}.grm.N.bin" >> blood_grm.grm.N.bin
+done
+EOF
+)
+
+dx run app-swiss-army-knife \
+  "${DX_INPUTS[@]}" \
+  -icmd="$MERGE_CMD" \
+  --instance-type mem1_ssd1_v2_x4 \
+  --destination "${PROJECT_ID}:${MERGE_DEST}" \
+  --yes
+```
+
+Outputs after the merge step:
+- `blood_grm.grm.id`
+- `blood_grm.grm.bin`
+- `blood_grm.grm.N.bin`
+
+Warning:
+- This partitioned workflow helps build the full dense GRM.
+- It does not make full-sample GREML practical at ~488k samples. For heritability estimation, you will usually still want an unrelated/QC subset.
+
 ### Step 4: Run GREML one trait at a time
 
 Example `30000`:
