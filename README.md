@@ -271,6 +271,33 @@ EOF
 done
 ```
 
+Before merging, verify that all expected part files exist:
+
+```bash
+PART_DIR="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/parts"
+PARTS=250
+
+for suffix in grm.id grm.bin grm.N.bin; do
+  echo "${suffix}: $(dx find data --path "${PART_DIR}" --name "blood_grm.part_${PARTS}_*.${suffix}" --brief | wc -l)"
+done
+```
+
+If any count is less than `250`, some part-jobs are still running or failed. To see which parts are missing:
+
+```bash
+PART_DIR="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/parts"
+PARTS=250
+
+for i in $(seq 1 ${PARTS}); do
+  for suffix in grm.id grm.bin grm.N.bin; do
+    n=$(dx find data --path "${PART_DIR}" --name "blood_grm.part_${PARTS}_${i}.${suffix}" --brief | wc -l)
+    if [ "$n" -eq 0 ]; then
+      echo "missing: blood_grm.part_${PARTS}_${i}.${suffix}"
+    fi
+  done
+done
+```
+
 After all part-jobs finish successfully, merge the parts in a second Swiss Army Knife job:
 
 ```bash
@@ -286,6 +313,10 @@ for i in $(seq 1 ${PARTS}); do
       --path "${PART_DIR}" \
       --name "blood_grm.part_${PARTS}_${i}.${suffix}" \
       --brief)
+    if [ -z "$file_id" ]; then
+      echo "Missing file: blood_grm.part_${PARTS}_${i}.${suffix}" >&2
+      exit 1
+    fi
     DX_INPUTS+=("-iin=${file_id}")
   done
 done
@@ -319,6 +350,35 @@ Outputs after the merge step:
 Warning:
 - This partitioned workflow helps build the full dense GRM.
 - It does not make full-sample GREML practical at ~488k samples. For heritability estimation, you will usually still want an unrelated/QC subset.
+- If `dx find data` returns zero files in the `parts` folder, the merge step is premature. First confirm that the partition jobs were actually launched and completed successfully.
+
+### Step 3c: Create an unrelated GRM from the merged full GRM
+
+GCTA's own tutorial shows `--grm-cutoff 0.025 --make-grm` as the standard way to remove cryptic relatedness from a merged GRM, while noting that `0.025` is somewhat arbitrary.
+
+Copy and paste:
+
+```bash
+PROJECT_ID=$(dx pwd | sed 's/:.*//')
+MERGED_DIR="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/merged"
+DEST="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_unrelated"
+
+dx run app-swiss-army-knife \
+  -iin="${PROJECT_ID}:${MERGED_DIR}/blood_grm.grm.id" \
+  -iin="${PROJECT_ID}:${MERGED_DIR}/blood_grm.grm.bin" \
+  -iin="${PROJECT_ID}:${MERGED_DIR}/blood_grm.grm.N.bin" \
+  -icmd='docker run --rm -u "$(id -u):$(id -g)" -w "$PWD" -v "$PWD":"$PWD" quay.io/biocontainers/gcta:1.94.1--h9ee0642_0 gcta64 --grm blood_grm --grm-cutoff 0.025 --make-grm --out blood_grm_rm025' \
+  --instance-type mem2_ssd1_v2_x32 \
+  --destination "${PROJECT_ID}:${DEST}" \
+  --yes
+```
+
+Expected outputs:
+- `blood_grm_rm025.grm.id`
+- `blood_grm_rm025.grm.bin`
+- `blood_grm_rm025.grm.N.bin`
+
+The file `blood_grm_rm025.grm.id` is also a valid two-column keep list for later GREML jobs.
 
 ### Step 4: Run GREML one trait at a time
 
