@@ -217,6 +217,12 @@ Important:
 - A full dense GRM on all ~488k UKB samples is usually not practical in a standard RAP job. GCTA may report memory requirements on the order of terabytes.
 - For GREML, the usual practical approach is to build the GRM on an unrelated/QC-passed subset using `--keep`.
 - If you need the full GRM itself for another purpose, GCTA supports `--make-grm-part` to split GRM construction across many jobs, but GREML on the full dense UKB-scale GRM is still generally impractical.
+- In practice on UKB RAP, the simplest path is usually to use a precomputed unrelated/QC sample list first, rather than merge a full-cohort GRM.
+- Common sources are an existing lab QC keep file, UKB relatedness resources such as `ukb_rel.dat`, or a cohort defined from UKB relatedness fields (for example Field 22021).
+
+Preferred GREML path:
+- If you already have an unrelated/QC sample list, use it up front with `--keep` when building the GRM.
+- This is much simpler than constructing and merging a full dense GRM for all ~488k samples and then pruning related individuals afterward.
 
 ### Step 3b: Submit a partitioned GRM across many jobs
 
@@ -288,7 +294,7 @@ If any count is less than `250`, some part-jobs are still running or failed. To 
 PART_DIR="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/parts"
 PARTS=250
 
-for i in $(seq 1 ${PARTS}); do
+for i in $(seq -f "%03g" 1 ${PARTS}); do
   for suffix in grm.id grm.bin grm.N.bin; do
     n=$(dx find data --path "${PART_DIR}" --name "blood_grm.part_${PARTS}_${i}.${suffix}" --brief | wc -l)
     if [ "$n" -eq 0 ]; then
@@ -298,7 +304,14 @@ for i in $(seq 1 ${PARTS}); do
 done
 ```
 
-After all part-jobs finish successfully, merge the parts in a second Swiss Army Knife job:
+After all part-jobs finish successfully, merge the parts in a second Swiss Army Knife job.
+
+Recommended:
+- Do not build a 750-entry `DX_INPUTS` array in the interactive terminal.
+- Do not download all parts to scratch space first. The merged GRM is too large for small worker disks.
+- Inside Swiss Army Knife, do not rely on `dx upload` for merged outputs. Write the final merged files into the job output directory and let the app upload them automatically at job completion.
+- Use a large-storage instance type for the merge because the merged `*.grm.bin` and `*.grm.N.bin` files together are very large.
+- In practice, provide at least one small `-iin` input to Swiss Army Knife for this merge job. Some SAK versions appear to error during output handling when the optional `in` array is completely absent.
 
 ```bash
 PROJECT_ID=$(dx pwd | sed 's/:.*//')
@@ -306,38 +319,31 @@ PART_DIR="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_parti
 MERGE_DEST="/Sool/Analysis/GCTA_Heritability/20260331_test_run/gcta_runs/grm_partitioned/merged"
 PARTS=250
 
-DX_INPUTS=()
-for i in $(seq 1 ${PARTS}); do
-  for suffix in grm.id grm.bin grm.N.bin; do
-    file_id=$(dx find data \
-      --path "${PART_DIR}" \
-      --name "blood_grm.part_${PARTS}_${i}.${suffix}" \
-      --brief)
-    if [ -z "$file_id" ]; then
-      echo "Missing file: blood_grm.part_${PARTS}_${i}.${suffix}" >&2
-      exit 1
-    fi
-    DX_INPUTS+=("-iin=${file_id}")
-  done
-done
-
 MERGE_CMD=$(cat <<EOF
 set -euo pipefail
+cd /home/dnanexus/out/out
 : > blood_grm.grm.id
 : > blood_grm.grm.bin
 : > blood_grm.grm.N.bin
-for i in \$(seq 1 ${PARTS}); do
-  cat "blood_grm.part_${PARTS}_\${i}.grm.id" >> blood_grm.grm.id
-  cat "blood_grm.part_${PARTS}_\${i}.grm.bin" >> blood_grm.grm.bin
-  cat "blood_grm.part_${PARTS}_\${i}.grm.N.bin" >> blood_grm.grm.N.bin
+
+for i in \$(seq -f "%03g" 1 ${PARTS}); do
+  dx cat "${PROJECT_ID}:${PART_DIR}/blood_grm.part_${PARTS}_\${i}.grm.id" >> blood_grm.grm.id
+done
+
+for i in \$(seq -f "%03g" 1 ${PARTS}); do
+  dx cat "${PROJECT_ID}:${PART_DIR}/blood_grm.part_${PARTS}_\${i}.grm.bin" >> blood_grm.grm.bin
+done
+
+for i in \$(seq -f "%03g" 1 ${PARTS}); do
+  dx cat "${PROJECT_ID}:${PART_DIR}/blood_grm.part_${PARTS}_\${i}.grm.N.bin" >> blood_grm.grm.N.bin
 done
 EOF
 )
 
 dx run app-swiss-army-knife \
-  "${DX_INPUTS[@]}" \
+  -iin="${PROJECT_ID}:${PART_DIR}/blood_grm.part_${PARTS}_001.grm.id" \
   -icmd="$MERGE_CMD" \
-  --instance-type mem1_ssd1_v2_x4 \
+  --instance-type mem3_ssd3_x4 \
   --destination "${PROJECT_ID}:${MERGE_DEST}" \
   --yes
 ```
