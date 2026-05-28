@@ -339,6 +339,8 @@ discover_ukb_blood_lab_shared <- function(headers, age_col, pc_prefix, num_pcs) 
   age_found <- first_existing(headers, c(age_col, "participant.p21022", "participant.p21022_i0", "p21022", "age"))
   sex_binary <- first_existing(headers, c("p31_Male", "participant.p31_Male", "sex_male"))
   sex_general <- first_existing(headers, c("participant.p31", "participant.p31_i0", "p31", "sex"))
+  primary_pcs <- find_numbered_columns(headers, c(pc_prefix, "participant.p22009_a", "p22009_a"), num_pcs)
+  fallback_pcs <- if (length(primary_pcs)) character() else find_numbered_columns(headers, c("PC", "pc"), num_pcs)
 
   covars <- ordered_unique(c(
     first_existing(headers, c("Array", "array")),
@@ -360,8 +362,8 @@ discover_ukb_blood_lab_shared <- function(headers, age_col, pc_prefix, num_pcs) 
       "age_squared_by_sex",
       "age2_by_sex"
     )),
-    find_numbered_columns(headers, c(pc_prefix, "participant.p22009_a", "p22009_a"), num_pcs),
-    find_numbered_columns(headers, c("PC", "pc"), num_pcs)
+    primary_pcs,
+    fallback_pcs
   ))
 
   list(covar_cols = covars, qcovar_cols = qcovars, age_col = age_found)
